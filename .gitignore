@@ -1,2 +1,25 @@
-node_modules
+# Dependencies
+node_modules/
+
+# Environment Variables
 .env
+.env.*
+
+# Logs
+logs
+*.log
+npm-debug.log*
+
+# IDE / Editor Configs
+.vscode/
+.idea/
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# Scratch & Dev Scripts
+test_db.js
+scratch/

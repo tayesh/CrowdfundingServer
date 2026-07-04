@@ -441,7 +441,7 @@ router.patch('/withdrawals/:id/status', verifyJWT, authorizeRoles('admin'), asyn
             message: status === 'rejected' 
                 ? `Your withdrawal request for "${withdrawal.campaignId.title}" was rejected: ${rejectionReason}`
                 : `Your withdrawal request for "${withdrawal.campaignId.title}" is now ${status}.`,
-            link: `/dashboard?tab=payments`
+            link: `/dashboard?tab=withdrawals`
         });
 
         res.status(200).json({ message: `Withdrawal ${status}`, withdrawal });

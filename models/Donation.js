@@ -38,7 +38,7 @@ const donationSchema = new mongoose.Schema({
         gatewaySessionKey: String,
         status: {
             type: String,
-            enum: ['pledged', 'charged', 'failed', 'cancelled', 'refunded'],
+            enum: ['pledged', 'charged', 'failed', 'cancelled', 'refunded', 'PRE_AUTHORIZED'],
             required: true
         },
         paidAt: Date,
@@ -55,7 +55,7 @@ const donationSchema = new mongoose.Schema({
     },
     status: {
         type: String,
-        enum: ['pledged', 'charged', 'failed', 'cancelled', 'refunded'],
+        enum: ['pledged', 'charged', 'failed', 'cancelled', 'refunded', 'PRE_AUTHORIZED'],
         default: 'pledged'
     },
     rewardDelivery: {

@@ -84,7 +84,7 @@ router.patch('/:id/toggle-ban', verifyJWT, authorizeRoles('admin'), async (req, 
             message: isBanning 
                 ? `Your campaign "${campaign.title}" has been banned for violating our terms of service.` 
                 : `Your campaign "${campaign.title}" has been restored.`,
-            link: '/dashboard?tab=my-campaigns'
+            link: '/dashboard?tab=my-projects'
         });
 
         res.status(200).json({ message: `Campaign ${isBanning ? 'banned' : 'restored'} successfully`, campaign });
@@ -99,6 +99,95 @@ router.get('/my-campaigns', verifyJWT, authorizeRoles('creator'), async (req, re
         const campaigns = await Campaign.find({ creatorId: req.user.id }).sort({ createdAt: -1 });
         res.status(200).json(campaigns);
     } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Admin: Get Global Fulfillment Stats
+router.get('/admin/fulfillment-monitor', verifyJWT, authorizeRoles('admin'), async (req, res) => {
+    try {
+        const Donation = (await import('../models/Donation.js')).default;
+        
+        const campaigns = await Campaign.find({ status: 'successful' })
+            .populate('creatorId', 'name email')
+            .select('title totalRaised backerCount rewardProgressStatus updatedAt');
+
+        const campaignStats = await Promise.all(campaigns.map(async (c) => {
+            const donations = await Donation.find({ campaignId: c._id, status: 'charged' });
+            
+            let totalFulfilled = 0;
+            let totalConfirmed = 0;
+            donations.forEach(d => {
+                totalFulfilled += d.rewardDelivery.fulfilledRewardTierIds.length;
+                totalConfirmed += d.rewardDelivery.confirmedRewardTierIds.length;
+            });
+
+            const totalObligations = donations.length; // Baseline: at least 1 reward per donation
+            const confirmationRate = totalFulfilled > 0 ? (totalConfirmed / totalFulfilled) * 100 : 0;
+            const deliveryRate = totalObligations > 0 ? (totalFulfilled / totalObligations) * 100 : 0;
+
+            // Fraud Detection: High delivery reported by creator, but low confirmation from backers after some time
+            const daysSinceLastUpdate = (new Date() - new Date(c.updatedAt)) / (1000 * 60 * 60 * 24);
+            const isHighRisk = deliveryRate > 50 && confirmationRate < 10 && daysSinceLastUpdate > 14;
+
+            return {
+                id: c._id,
+                title: c.title,
+                creator: c.creatorId,
+                totalRewards: totalObligations,
+                deliveredRewards: totalFulfilled,
+                confirmedRewards: totalConfirmed,
+                confirmationRate: confirmationRate.toFixed(2),
+                deliveryRate: deliveryRate.toFixed(2),
+                isHighRisk,
+                rewardProgressStatus: c.rewardProgressStatus
+            };
+        }));
+
+        res.status(200).json(campaignStats);
+    } catch (error) {
+        res.status(500).json({ message: error.message });
+    }
+});
+
+// Admin: Get Global Overview Stats
+router.get('/admin/stats', verifyJWT, authorizeRoles('admin'), async (req, res) => {
+    try {
+        let User;
+        try {
+            User = mongoose.model('User');
+        } catch (e) {
+            User = (await import('../models/User.js')).default;
+        }
+        
+        const aggregation = await Campaign.aggregate([
+            {
+                $group: {
+                    _id: null,
+                    platformTotal: { $sum: "$totalRaised" },
+                    totalCampaigns: { $sum: 1 },
+                    pendingProjects: {
+                        $sum: { $cond: [{ $eq: ["$status", "pending"] }, 1, 0] }
+                    }
+                }
+            }
+        ]);
+
+        const campaignStats = aggregation[0] || { platformTotal: 0, totalCampaigns: 0, pendingProjects: 0 };
+        const totalUsers = await User.countDocuments();
+        const pendingCreators = await User.countDocuments({ approvalStatus: 'pending' });
+
+        const stats = {
+            platformTotal: campaignStats.platformTotal,
+            totalCampaigns: campaignStats.totalCampaigns,
+            pendingProjects: campaignStats.pendingProjects,
+            totalUsers,
+            pendingCreators
+        };
+
+        res.status(200).json(stats);
+    } catch (error) {
+        console.error('Admin Stats Error:', error);
         res.status(500).json({ message: error.message });
     }
 });
@@ -149,7 +238,7 @@ router.patch('/:id/approve', verifyJWT, authorizeRoles('admin'), async (req, res
             message: isApproved 
                 ? `Your campaign "${campaign.title}" has been approved by our team. It is now live!` 
                 : `Your campaign "${campaign.title}" was not approved. Reason: ${rejectionReason || 'No reason provided.'}`,
-            link: '/dashboard?tab=my-campaigns'
+            link: '/dashboard?tab=my-projects'
         });
 
         res.status(200).json({ message: `Campaign ${isApproved ? 'approved' : 'rejected'} successfully`, campaign });
@@ -299,7 +388,7 @@ router.patch('/donations/:donationId/reward-status', verifyJWT, authorizeRoles('
                     type: 'CAMPAIGN_UPDATE',
                     title: 'Reward Fulfilled! 🎁',
                     message: `The creator has marked your reward "${tier?.title || 'Reward'}" for "${donation.campaignId.title}" as fulfilled.`,
-                    link: `/dashboard?tab=contributions`
+                    link: `/dashboard?tab=backed-projects`
                 });
             }
         } else {
@@ -410,53 +499,6 @@ router.patch('/donations/:donationId/confirm-delivery', verifyJWT, async (req, r
         res.status(500).json({ message: error.message });
     }
 });
-// Admin: Get Global Fulfillment Stats
-router.get('/admin/fulfillment-monitor', verifyJWT, authorizeRoles('admin'), async (req, res) => {
-    try {
-        const Donation = (await import('../models/Donation.js')).default;
-        
-        const campaigns = await Campaign.find({ status: 'successful' })
-            .populate('creatorId', 'name email')
-            .select('title totalRaised backerCount rewardProgressStatus updatedAt');
-
-        const campaignStats = await Promise.all(campaigns.map(async (c) => {
-            const donations = await Donation.find({ campaignId: c._id, status: 'charged' });
-            
-            let totalFulfilled = 0;
-            let totalConfirmed = 0;
-            donations.forEach(d => {
-                totalFulfilled += d.rewardDelivery.fulfilledRewardTierIds.length;
-                totalConfirmed += d.rewardDelivery.confirmedRewardTierIds.length;
-            });
-
-            const totalObligations = donations.length; // Baseline: at least 1 reward per donation
-            const confirmationRate = totalFulfilled > 0 ? (totalConfirmed / totalFulfilled) * 100 : 0;
-            const deliveryRate = totalObligations > 0 ? (totalFulfilled / totalObligations) * 100 : 0;
-
-            // Fraud Detection: High delivery reported by creator, but low confirmation from backers after some time
-            const daysSinceLastUpdate = (new Date() - new Date(c.updatedAt)) / (1000 * 60 * 60 * 24);
-            const isHighRisk = deliveryRate > 50 && confirmationRate < 10 && daysSinceLastUpdate > 14;
-
-            return {
-                id: c._id,
-                title: c.title,
-                creator: c.creatorId,
-                totalRewards: totalObligations,
-                deliveredRewards: totalFulfilled,
-                confirmedRewards: totalConfirmed,
-                confirmationRate: confirmationRate.toFixed(2),
-                deliveryRate: deliveryRate.toFixed(2),
-                isHighRisk,
-                rewardProgressStatus: c.rewardProgressStatus
-            };
-        }));
-
-        res.status(200).json(campaignStats);
-    } catch (error) {
-        res.status(500).json({ message: error.message });
-    }
-});
-
 // DEV ONLY: Set campaign deadline to now for testing
 router.patch('/:id/test/expire-now', verifyJWT, authorizeRoles('creator', 'admin'), async (req, res) => {
     try {
